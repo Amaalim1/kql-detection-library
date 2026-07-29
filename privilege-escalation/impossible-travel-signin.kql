@@ -1,0 +1,48 @@
+// Detection: Impossible Travel Sign-In
+// MITRE ATT&CK: T1078.004 (Valid Accounts: Cloud Accounts)
+// Log source: Microsoft Sentinel — SigninLogs
+//
+// What it detects:
+//   Successful sign-ins for the same account from two geographically
+//   distant locations within a time window too short for actual travel
+//   — a strong indicator of credential theft or session/token replay.
+//
+// Why it matters:
+//   Valid-account abuse is one of the hardest techniques to catch
+//   because the credentials are legitimate. Impossible travel is a
+//   behavioral signal that doesn't rely on knowing the attacker's IP or
+//   tooling in advance, which makes it durable against attacker
+//   evasion.
+//
+// False positive considerations:
+//   - Users on VPN or corporate proxies that route through different
+//     regions will trigger this frequently — exclude known corporate
+//     egress IP ranges.
+//   - Traveling executives/road warriors using cellular hotspots that
+//     hop between carrier IP pools are a common noisy source; consider
+//     a per-user allowlist or risk-based suppression.
+//   - Distance/time thresholds below assume commercial flight speed
+//     (~900 km/h) with a buffer; tune MinDistanceKm and MaxSpeedKmh to
+//     your false-positive tolerance.
+
+let MinDistanceKm = 500;
+let MaxSpeedKmh = 900;
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType == "0"
+| extend Lat = todouble(LocationDetails.geoCoordinates.latitude)
+| extend Lon = todouble(LocationDetails.geoCoordinates.longitude)
+| where isnotempty(Lat) and isnotempty(Lon)
+| project TimeGenerated, UserPrincipalName, IPAddress, Lat, Lon, City = tostring(LocationDetails.city)
+| order by UserPrincipalName, TimeGenerated asc
+| serialize
+| extend PrevTime = prev(TimeGenerated), PrevLat = prev(Lat), PrevLon = prev(Lon),
+    PrevUser = prev(UserPrincipalName), PrevCity = prev(City)
+| where UserPrincipalName == PrevUser
+| extend DistanceKm = geo_distance_2points(Lon, Lat, PrevLon, PrevLat) / 1000
+| extend HoursElapsed = datetime_diff('second', TimeGenerated, PrevTime) / 3600.0
+| extend RequiredSpeedKmh = iff(HoursElapsed > 0, DistanceKm / HoursElapsed, 0.0)
+| where DistanceKm >= MinDistanceKm and RequiredSpeedKmh >= MaxSpeedKmh
+| project TimeGenerated, UserPrincipalName, FromCity = PrevCity, ToCity = City,
+    DistanceKm, HoursElapsed, RequiredSpeedKmh, IPAddress
+| order by RequiredSpeedKmh desc
