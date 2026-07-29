@@ -1,0 +1,39 @@
+// Detection: Suspicious Mailbox Auto-Forwarding Rule Created
+// MITRE ATT&CK: T1114.003 (Email Collection: Email Forwarding Rule) —
+//   commonly follows T1566 (Phishing) as a post-compromise persistence step
+// Log source: Microsoft Sentinel / Defender for Office 365 — OfficeActivity
+//
+// What it detects:
+//   New inbox rules that forward or redirect mail to an external
+//   domain, especially rules with generic hide-the-evidence names
+//   (e.g. auto-deleting or moving the forwarded copy to an unused
+//   folder) — a classic move after a successful phishing/BEC
+//   compromise to maintain visibility into a mailbox after the
+//   password is changed.
+//
+// Why it matters:
+//   Forwarding rules survive password resets and MFA re-enrollment,
+//   making them a durable foothold for business email compromise. This
+//   is one of the highest-value, lowest-volume detections for
+//   protecting executive and finance mailboxes specifically.
+//
+// False positive considerations:
+//   - Legitimate use cases exist (assistants forwarding to a shared
+//     mailbox, employees forwarding to a personal address with prior
+//     approval) — cross-reference against an approved-forwarding
+//     exception list rather than blanket-blocking.
+//   - Vacation/out-of-office auto-forward setups by end users are
+//     common and usually benign; the external-domain + rule-name
+//     heuristics below help separate these from BEC persistence, but
+//     analyst review is still recommended for every hit.
+
+OfficeActivity
+| where TimeGenerated > ago(1d)
+| where Operation in ("New-InboxRule", "Set-InboxRule")
+| extend Parameters = parse_json(Parameters)
+| extend RuleName = tostring(Parameters[0].Value)
+| extend ForwardTo = tostring(Parameters[1].Value)
+| where isnotempty(ForwardTo)
+| where ForwardTo !has "yourcompany.com" // replace with your own accepted domain(s)
+| project TimeGenerated, UserId, Operation, RuleName, ForwardTo, ClientIP
+| order by TimeGenerated desc
