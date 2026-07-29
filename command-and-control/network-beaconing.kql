@@ -1,0 +1,48 @@
+// Detection: Network Beaconing (Regular-Interval C2 Callback)
+// MITRE ATT&CK: T1071 (Application Layer Protocol) / T1571 (Non-Standard Port)
+// Log source: Microsoft Defender XDR — DeviceNetworkEvents
+//
+// What it detects:
+//   A device making repeated outbound connections to the same external
+//   destination at a suspiciously regular time interval — the hallmark
+//   of malware polling a C2 server for tasking rather than normal
+//   human-driven or bursty application traffic.
+//
+// Why it matters:
+//   Most C2 frameworks default to periodic check-ins with jitter, but
+//   the underlying interval regularity still stands out statistically
+//   against normal browsing/app traffic. Beaconing detection catches
+//   C2 channels that don't match any known-bad IP/domain reputation
+//   list, which is essential against custom or freshly-registered
+//   infrastructure.
+//
+// False positive considerations:
+//   - Legitimate telemetry/heartbeat traffic (monitoring agents, update
+//     checkers, chat clients keeping a session alive) is also regular by
+//     design — allowlist known SaaS/agent endpoints (Teams, updater
+//     domains, EDR cloud endpoints) before alerting.
+//   - Low connection counts (< 6) make interval-regularity statistically
+//     unreliable; the threshold below requires at least 6 connections
+//     in the window to reduce noise.
+
+let LookbackWindow = 6h;
+let MinConnections = 6;
+let MaxVarianceSeconds = 5; // low variance in interval = regular beaconing
+DeviceNetworkEvents
+| where Timestamp > ago(LookbackWindow)
+| where ActionType == "ConnectionSuccess"
+| where RemoteIPType == "Public"
+| summarize Timestamps = make_list(Timestamp), ConnectionCount = count()
+    by DeviceName, RemoteIP, RemotePort
+| where ConnectionCount >= MinConnections
+| extend SortedTimes = array_sort_asc(Timestamps)
+| mv-expand with_itemindex=idx Time = SortedTimes to typeof(datetime)
+| order by DeviceName, RemoteIP, RemotePort, Time asc
+| serialize
+| extend PrevTime = prev(Time), PrevDevice = prev(DeviceName), PrevIP = prev(RemoteIP)
+| where DeviceName == PrevDevice and RemoteIP == PrevIP
+| extend IntervalSeconds = datetime_diff('second', Time, PrevTime)
+| summarize AvgIntervalSeconds = avg(IntervalSeconds), StdevIntervalSeconds = stdev(IntervalSeconds),
+    Connections = count() + 1 by DeviceName, RemoteIP, RemotePort
+| where StdevIntervalSeconds <= MaxVarianceSeconds and AvgIntervalSeconds > 10
+| order by Connections desc
