@@ -1,0 +1,30 @@
+// Detection: Windows Event Log Cleared
+// MITRE ATT&CK: T1070.001 (Indicator Removal: Clear Windows Event Logs)
+// Log source: Microsoft Sentinel — SecurityEvent (forwarded via AMA/MMA)
+//
+// What it detects:
+//   Event ID 1102 (audit log cleared) or 104 (System log cleared) —
+//   both are rare in normal operations and are a textbook anti-forensic
+//   step taken immediately after other malicious activity.
+//
+// Why it matters:
+//   Clearing logs is almost never done by accident and almost always
+//   happens right after something the attacker doesn't want you to
+//   see. Because the technique erases the very evidence you'd use to
+//   investigate, this alert should trigger immediate review of any
+//   other activity from the same host/account in the preceding hour.
+//
+// False positive considerations:
+//   - Scheduled log archival/rotation jobs on some servers legitimately
+//     clear logs after export — confirm your log management tooling's
+//     service account and exclude it explicitly, not by broad process
+//     name.
+//   - This should be a near-zero-false-positive, high-severity alert in
+//     most environments; investigate every hit rather than tuning it
+//     down.
+
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID in (1102, 104)
+| project TimeGenerated, Computer, Account, EventID, Activity
+| order by TimeGenerated desc

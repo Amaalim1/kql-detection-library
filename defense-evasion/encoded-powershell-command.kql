@@ -1,0 +1,34 @@
+// Detection: Base64-Encoded PowerShell Execution
+// MITRE ATT&CK: T1027 (Obfuscated Files or Information) / T1059.001 (PowerShell)
+// Log source: Microsoft Defender XDR — DeviceProcessEvents
+//
+// What it detects:
+//   powershell.exe or pwsh.exe invoked with -EncodedCommand (or the
+//   -enc/-e shorthand), which is used to hide command content from
+//   plain-text logging and simple string-based detections.
+//
+// Why it matters:
+//   Encoded commands are a near-universal technique in commodity
+//   malware, post-exploitation frameworks, and living-off-the-land
+//   attacks because it defeats casual log review and many naive
+//   keyword-based detections. Decoding the payload at alert time turns
+//   an obfuscation attempt into free visibility into attacker intent.
+//
+// False positive considerations:
+//   - Some legitimate deployment/config-management tools (SCCM,
+//     Intune scripts, some backup agents) use encoded commands for
+//     multi-line script delivery — allowlist by signed publisher or
+//     known script hash rather than suppressing the technique outright.
+//   - Decode the Base64 payload downstream (Defender Advanced Hunting
+//     supports base64_decode_tostring()) to triage quickly rather than
+//     treating every hit as equally severe.
+
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where FileName in~ ("powershell.exe", "pwsh.exe")
+| where ProcessCommandLine matches regex @"(?i)(-enc(odedcommand)?)\s+[A-Za-z0-9+/=]{20,}"
+| extend EncodedBlock = extract(@"(?i)-enc(?:odedcommand)?\s+([A-Za-z0-9+/=]{20,})", 1, ProcessCommandLine)
+| extend DecodedCommand = base64_decode_tostring(EncodedBlock)
+| project Timestamp, DeviceName, AccountName, ProcessCommandLine, DecodedCommand,
+    InitiatingProcessFileName, InitiatingProcessAccountName
+| order by Timestamp desc
