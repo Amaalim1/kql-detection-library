@@ -1,0 +1,39 @@
+// Detection: RDP Logon From a Device That Doesn't Normally Use It
+// MITRE ATT&CK: T1021.001 (Remote Services: Remote Desktop Protocol)
+// Log source: Microsoft Defender XDR — DeviceLogonEvents
+//
+// What it detects:
+//   Successful interactive/remote-interactive logons over RDP where the
+//   source device has no RDP logon history to that target in the
+//   preceding 14 days — a proxy for "new lateral movement path."
+//
+// Why it matters:
+//   RDP remains one of the most common lateral movement channels in
+//   both ransomware and targeted intrusions because it's a trusted,
+//   already-open protocol in most Windows environments. A brand-new
+//   source-to-target RDP path is exactly the kind of signal that's easy
+//   for a human analyst to miss but cheap for KQL to flag.
+//
+// False positive considerations:
+//   - New IT support staff, new employee onboarding, or first-time
+//     access to a newly built server will all show up as "new" paths —
+//     this detection is best used to build a watchlist for review, not
+//     as a stand-alone high-severity page.
+//   - Jump-box / bastion host architectures will legitimately show many
+//     new source-target pairs; exclude your designated jump-box device
+//     names from the "source" side.
+
+let LookbackWindow = 14d;
+let KnownPairs =
+    DeviceLogonEvents
+    | where Timestamp between (ago(LookbackWindow) .. ago(1d))
+    | where LogonType in ("RemoteInteractive")
+    | where ActionType == "LogonSuccess"
+    | summarize by DeviceName, RemoteIP;
+DeviceLogonEvents
+| where Timestamp > ago(1d)
+| where LogonType in ("RemoteInteractive")
+| where ActionType == "LogonSuccess"
+| join kind=leftanti KnownPairs on DeviceName, RemoteIP
+| project Timestamp, DeviceName, RemoteIP, AccountName, LogonType, ActionType
+| order by Timestamp desc
