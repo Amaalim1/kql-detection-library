@@ -58,8 +58,5 @@ production alert with paging/escalation attached.
       cases per query)
 - [ ] Expand Collection and Reconnaissance tactic coverage
 
-## About
 
-Built by [Abdiaziz Maalim](https://github.com/Amaalim1) — Cybersecurity
-student focused on detection engineering, threat intelligence, and blue
-team tooling.
+
