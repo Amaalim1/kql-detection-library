@@ -1,0 +1,43 @@
+// Detection: New Privileged Directory Role Assignment
+// MITRE ATT&CK: T1098.003 (Account Manipulation: Additional Cloud Roles)
+// Log source: Microsoft Sentinel — AuditLogs (Entra ID)
+//
+// What it detects:
+//   Any account added to a highly privileged Entra ID role (Global
+//   Administrator, Privileged Role Administrator, Application
+//   Administrator, etc.), especially outside of business hours or by
+//   an actor who does not normally perform role assignments.
+//
+// Why it matters:
+//   Privilege escalation via role assignment is a common persistence
+//   mechanism after initial compromise — attackers grant themselves or
+//   a secondary account standing admin rights so they don't need to
+//   re-exploit the original foothold. This is a low-volume, high-signal
+//   event that should almost always be reviewed.
+//
+// False positive considerations:
+//   - Legitimate IT onboarding/offboarding and scheduled access reviews
+//     will generate these events — cross-reference against your change
+//     management or ticketing system.
+//   - Break-glass account role changes during DR testing are expected;
+//     exclude known break-glass account IDs.
+//   - Consider suppressing during a defined maintenance window if your
+//     org does bulk role provisioning on a schedule.
+
+let PrivilegedRoles = dynamic([
+    "Global Administrator",
+    "Privileged Role Administrator",
+    "Privileged Authentication Administrator",
+    "Application Administrator",
+    "Cloud Application Administrator",
+    "Exchange Administrator"
+]);
+AuditLogs
+| where TimeGenerated > ago(1d)
+| where OperationName == "Add member to role"
+| extend RoleName = tostring(TargetResources[0].modifiedProperties[1].newValue)
+| extend TargetUser = tostring(TargetResources[0].userPrincipalName)
+| extend InitiatedBy = tostring(InitiatedBy.user.userPrincipalName)
+| where RoleName has_any (PrivilegedRoles)
+| project TimeGenerated, RoleName, TargetUser, InitiatedBy, Result, CorrelationId
+| order by TimeGenerated desc

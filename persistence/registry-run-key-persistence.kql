@@ -1,0 +1,35 @@
+// Detection: Registry Run Key / Startup Folder Persistence
+// MITRE ATT&CK: T1547.001 (Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder)
+// Log source: Microsoft Defender XDR — DeviceRegistryEvents
+//
+// What it detects:
+//   New or modified values under the classic Run/RunOnce autostart
+//   registry keys, written by a process that is not a known installer
+//   or IT management tool.
+//
+// Why it matters:
+//   Autorun registry keys are one of the oldest and still most common
+//   persistence mechanisms because they're simple, reliable across
+//   reboots, and easy to miss in manual review. Alerting on writes to
+//   these keys from unexpected processes catches malware and
+//   post-exploitation implants early.
+//
+// False positive considerations:
+//   - Legitimate software installers (Adobe, browsers, Teams, printer
+//     drivers) routinely write to Run keys — allowlist known installer
+//     paths/publishers rather than the key itself.
+//   - Group Policy or Intune-pushed configuration changes can appear as
+//     bulk writes across many devices at once; correlate with your
+//     change management calendar before treating as anomalous.
+
+DeviceRegistryEvents
+| where Timestamp > ago(1d)
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (
+    @"Microsoft\Windows\CurrentVersion\Run",
+    @"Microsoft\Windows\CurrentVersion\RunOnce"
+)
+| where InitiatingProcessFileName !in~ ("msiexec.exe", "trustedinstaller.exe", "explorer.exe")
+| project Timestamp, DeviceName, RegistryKey, RegistryValueName, RegistryValueData,
+    InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| order by Timestamp desc
