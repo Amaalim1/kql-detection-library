@@ -1,0 +1,43 @@
+// Detection: Large Upload to Unsanctioned Cloud Storage Domain
+// MITRE ATT&CK: T1567.002 (Exfiltration Over Web Service: Exfiltration to Cloud Storage)
+// Log source: Microsoft Defender XDR — DeviceNetworkEvents
+//
+// What it detects:
+//   A device sending an unusually large volume of outbound traffic to
+//   personal cloud storage / file-sharing domains (Mega, Dropbox
+//   personal, MediaFire, transfer.sh, etc.) that are not on the
+//   organization's sanctioned SaaS list.
+//
+// Why it matters:
+//   Personal file-sharing sites are a favorite exfiltration channel
+//   because they use standard HTTPS on 443 and are rarely blocked
+//   outright (unlike raw FTP or unusual ports), letting traffic blend
+//   in with normal web browsing. Volume-based detection on a curated
+//   domain list catches this without needing DLP content inspection.
+//
+// False positive considerations:
+//   - Maintain the UnsanctionedDomains list actively — sanctioned
+//     corporate storage (your official OneDrive/SharePoint/Box tenant)
+//     should never appear here, and the list will need periodic updates
+//     as new services emerge.
+//   - Marketing/creative teams legitimately uploading large media files
+//     to approved external partners can trigger this; pair with a
+//     business-context allowlist per department if false positives are
+//     high.
+//   - Bytes-sent thresholds should be tuned to your environment's
+//     typical upload baseline — the 100MB default below is a starting
+//     point, not a universal constant.
+
+let UnsanctionedDomains = dynamic([
+    "mega.nz", "mediafire.com", "transfer.sh", "wetransfer.com",
+    "sendspace.com", "gofile.io", "anonfiles.com"
+]);
+let MinBytesSent = 100000000; // 100 MB
+DeviceNetworkEvents
+| where Timestamp > ago(1d)
+| where ActionType == "ConnectionSuccess"
+| where RemoteUrl has_any (UnsanctionedDomains)
+| summarize TotalBytesSent = sum(todouble(column_ifexists("SentBytes", 0))), ConnectionCount = count()
+    by DeviceName, RemoteUrl, InitiatingProcessAccountName
+| where TotalBytesSent >= MinBytesSent
+| order by TotalBytesSent desc
